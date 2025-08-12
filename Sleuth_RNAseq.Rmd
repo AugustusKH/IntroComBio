@@ -1,0 +1,269 @@
+---
+title: "Problem Set 4"
+author: "Pakorn Sagulkoo 6380064520"
+date: '2022-09-29'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'D:/Bioinfor PhD/Introduction to Computational Molecular Biology/Homework/salmon_processed_data/data')
+```
+
+1. Load sleuth library
+
+```{r}
+library('sleuth')
+library('dplyr')
+```
+
+2. Load metadata table
+
+```{r}
+s2c <- read.table(file.path('metadata.txt'), header = TRUE, stringsAsFactors=FALSE, sep = "\t")
+```
+
+```{r}
+s2c
+```
+
+3. Preprocess data into sleuth format
+
+```{r}
+#### We use bootstrapping data from kallisto here
+so <- sleuth_prep(s2c, extra_bootstrap_summary = TRUE, read_bootstrap_tpm = TRUE)
+```
+
+```{r}
+## Fitting of the alternative hypothesis = condition-specific expression
+so <- sleuth_fit(so, ~condition, 'full')
+```
+
+```{r}
+## Fitting of the null hypothesis = no difference across condition
+so <- sleuth_fit(so, ~1, 'reduced')
+```
+
+```{r}
+## Perform Likelihood-Ratio-Test (LRT)
+so <- sleuth_lrt(so, 'reduced', 'full')
+```
+
+4. Generate result as table sorted by q-value (similar to FDR)
+
+```{r}
+sleuth_table <- sleuth_results(so, 'reduced:full', 'lrt', show_all = FALSE)
+```
+
+```{r}
+sleuth_table
+```
+
+5. Extract significant transcripts
+  5.1 At 5% FDR
+  
+```{r}
+sleuth_significant_0.05 <- dplyr::filter(sleuth_table, qval <= 0.05)
+```
+  
+```{r}
+sleuth_significant_0.05
+```
+
+  5.2 At 1% FDR
+
+```{r}
+sleuth_significant_0.01 <- dplyr::filter(sleuth_table, qval <= 0.01)
+```
+
+```{r}
+sleuth_significant_0.01
+```
+
+6. Calculate differential expression
+
+```{r}
+kallisto_tpm <- sleuth_to_matrix(so, 'obs_norm', 'tpm')
+```
+
+```{r}
+#Change matrix to data frame
+kallisto_tpm_df <- data.frame(kallisto_tpm)
+kallisto_tpm_df <- data.frame(gene_id = row.names(kallisto_tpm_df), kallisto_tpm_df) # create the first column containg gene id
+rownames(kallisto_tpm_df) <- NULL #remove rownames
+
+kallisto_tpm_df
+```
+
+```{r}
+#Calculate fold change and log2FC
+kallisto_tpm_df <- kallisto_tpm_df %>%
+  dplyr::mutate(fold_change = rowMeans(select(kallisto_tpm_df, c(MOV10_overexpression1, MOV10_overexpression2, MOV10_overexpression3)))/rowMeans(select(kallisto_tpm_df, c(control1, control2, control3)))) %>%
+  dplyr::mutate(log2FC = log(fold_change, 2)) %>%
+  na.omit()
+```
+
+```{r}
+#Naming the first column
+
+kallisto_tpm_df
+```
+
+```{r}
+#Merge two data frames and select gene ID, q-value, and log2FC
+Merge_df <- sleuth_table %>%
+  dplyr::inner_join(kallisto_tpm_df, by = c("target_id" = "gene_id")) %>%
+  dplyr::select(gene_id = target_id, qval, log2FC)
+  
+Merge_df
+```
+
+  6.1 Select the top 5 most significantly up-regulated transcripts (sorted by q-value)
+  
+```{r}
+sig_upreg_df <- Merge_df %>%
+  filter(log2FC > 0) %>%
+  arrange(qval)
+
+head(sig_upreg_df, 5)
+```
+```{r}
+#Convert ensembl id to hgnc symbol
+library(biomaRt)
+```
+  
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+```
+  
+```{r}
+gene_id_df <- getBM(attributes=c('ensembl_transcript_id','hgnc_symbol'), mart = ensembl)
+gene_id_df
+```
+  
+```{r}
+sig_upreg_df_adapt <- sig_upreg_df %>%
+  inner_join(gene_id_df, by = c("gene_id" = "ensembl_transcript_id")) %>%
+  select(gene_id, hgnc_symbol, qval, log2FC)
+
+head(sig_upreg_df_adapt, 5)
+```
+  
+  6.2 Select the top 5 most significantly down-regulated transcripts (sorted by q-value)
+
+```{r}
+sig_downreg_df <- Merge_df %>%
+  filter(log2FC < 0) %>%
+  arrange(qval)
+
+head(sig_downreg_df, 5)
+```
+
+7. View expression level of specific transcripts
+  7.1 Upregulated genes
+
+```{r}
+plot_bootstrap(so, 'ENST00000482545', units = 'tpm', color_by = 'condition')
+```
+
+```{r}
+plot_bootstrap(so, 'ENST00000495374', units = 'tpm', color_by = 'condition')
+```
+
+```{r}
+plot_bootstrap(so, 'ENST00000343677', units = 'tpm', color_by = 'condition')
+```
+
+```{r}
+plot_bootstrap(so, 'ENST00000340857', units = 'tpm', color_by = 'condition')
+```
+
+```{r}
+plot_bootstrap(so, 'ENST00000246672', units = 'tpm', color_by = 'condition')
+```
+
+  7.2 Downregulated genes
+  
+```{r}
+plot_bootstrap(so, 'ENST00000615443', units = 'tpm', color_by = 'condition')
+```
+  
+```{r}
+plot_bootstrap(so, 'ENST00000396504', units = 'tpm', color_by = 'condition')
+```
+
+```{r}
+plot_bootstrap(so, 'ENST00000567212', units = 'tpm', color_by = 'condition')
+```
+
+```{r}
+plot_bootstrap(so, 'ENST00000272438', units = 'tpm', color_by = 'condition')
+```
+
+```{r}
+plot_bootstrap(so, 'ENST00000328771', units = 'tpm', color_by = 'condition')
+```
+
+8. Saving the differential expressed genes
+  8.1 Upregulated genes
+
+```{r}
+upreg_sig_genes <- Merge_df %>%
+  filter(qval < 0.05 & log2FC > 0) %>%
+  select(gene_id)
+
+upreg_sig_genes
+```
+
+```{r}
+write.table(upreg_sig_genes, file = 'upreg_sig_genes.txt', sep = '\t', quote = FALSE, col.names = FALSE, row.names = FALSE)
+```
+
+  8.2 Downregulated genes
+  
+```{r}
+downreg_sig_genes <- Merge_df %>%
+  filter(qval < 0.05 & log2FC < 0) %>%
+  select(gene_id)
+
+downreg_sig_genes
+```
+  
+```{r}
+write.table(downreg_sig_genes, file = 'downreg_sig_genes.txt', sep = '\t', quote = FALSE, col.names = FALSE, row.names = FALSE)
+```
+
+  8.3 DEGs and log2FC
+  
+```{r}
+sig_genes <- Merge_df %>%
+  filter(qval <= 0.05) %>%
+  select(gene_id, log2FC)
+
+sig_genes
+```
+  
+```{r}
+sig_genes_symbol <- sig_genes %>%
+  inner_join(gene_id_df, by = c("gene_id" = "ensembl_transcript_id")) %>% #Convert ensembl_id to gene symbol
+  select(hgnc_symbol, log2FC) %>%
+  filter(hgnc_symbol != "") %>% #Remove empthy symbols
+  mutate(log2FC = replace(log2FC, log2FC == Inf, 10)) %>%   #Convert Inf value to high positive value
+  mutate(log2FC = replace(log2FC, log2FC == -Inf, -10)) #%>% #Convert -Inf value to high negative value
+  #group_by(hgnc_symbol) %>%
+  #mutate(mean_log2FC = mean(log2FC)) %>%   #Summarize duplicate transcripts (isoform) using log2FC average
+  #distinct(hgnc_symbol, .keep_all = TRUE) %>%
+  #select(-log2FC)
+
+sig_genes_symbol
+```
+  
+```{r}
+write.table(sig_genes_symbol, file = 'sig_genes.txt', sep = '\t', quote = FALSE, col.names = FALSE, row.names = FALSE)
+```
+
+
+
+
+
+
